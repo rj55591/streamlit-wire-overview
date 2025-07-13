@@ -91,19 +91,7 @@ def generate_final_wire_overview(customer_orders_fp, wire_coil_bal_fp, incoming_
     result = result.merge(usage_df, on="Wire ø", how="left")
     result.fillna(0, inplace=True)
 
-    result["Total Available (kg)"] = result[["Available Inventory (kg)", "Kewei", "QS", "Bolin"]].sum(axis=1)
-    result["Surplus / Shortage (kg)"] = result["Total Available (kg)"] - result["Total Pending Wire Required (kg)"]
-    result["Months of Coverage"] = (result["Surplus / Shortage (kg)"] / result["Default Avg Monthly Usage (kg)"].replace({0: pd.NA})).round(2)
-
     return result, pending_df
-
-def style_coverage(df):
-    def highlight(val):
-        if pd.isna(val): return ''
-        if val <= 2: return 'background-color: #f8d7da'  # red
-        elif val <= 5: return 'background-color: #fff3cd'  # orange
-        else: return 'background-color: #d4edda'  # green
-    return df.style.applymap(highlight, subset=['Months of Coverage'])
 
 # Streamlit UI
 st.title("Final Wire Overview Generator")
@@ -136,11 +124,35 @@ if st.button("Generate Overview") and all([cust_orders_file, coil_bal_file, inco
         default_fp.name
     )
 
+    st.session_state["base_df"] = final_df.copy()
+    st.session_state["pending_df"] = pending_df.copy()
+
+if "base_df" in st.session_state:
+    base_df = st.session_state["base_df"].copy()
+
+    st.sidebar.header("Supplier Toggle")
+    use_kewei = st.sidebar.checkbox("Include Kewei", value=True)
+    use_qs = st.sidebar.checkbox("Include QS", value=True)
+    use_bolin = st.sidebar.checkbox("Include Bolin", value=True)
+
+    included_suppliers = []
+    if use_kewei: included_suppliers.append("Kewei")
+    if use_qs: included_suppliers.append("QS")
+    if use_bolin: included_suppliers.append("Bolin")
+
+    base_df["Total Available (kg)"] = base_df[["Available Inventory (kg)"] + included_suppliers].sum(axis=1)
+    base_df["Surplus / Shortage (kg)"] = base_df["Total Available (kg)"] - base_df["Total Pending Wire Required (kg)"]
+    base_df["Months of Coverage"] = (
+        base_df["Surplus / Shortage (kg)"] / base_df["Default Avg Monthly Usage (kg)"].replace({0: pd.NA})
+    ).round(2)
+
     st.success("Overview generated successfully!")
-    st.dataframe(style_coverage(final_df))
+    included_text = ", ".join(included_suppliers) if included_suppliers else "None"
+    st.markdown(f"**ℹ️ Calculations include suppliers:** `{included_text}`")
+    st.dataframe(base_df)
 
     export_fp = os.path.join(tempfile.gettempdir(), "Final_Wire_Overview.xlsx")
-    final_df.to_excel(export_fp, index=False)
+    base_df.to_excel(export_fp, index=False)
     with open(export_fp, "rb") as f:
         st.download_button(
             label="Download Final Wire Overview as XLSX",
@@ -150,7 +162,7 @@ if st.button("Generate Overview") and all([cust_orders_file, coil_bal_file, inco
         )
 
     pending_fp = os.path.join(tempfile.gettempdir(), "Pending_Orders.xlsx")
-    pending_df.to_excel(pending_fp, index=False)
+    st.session_state["pending_df"].to_excel(pending_fp, index=False)
     with open(pending_fp, "rb") as f:
         st.download_button(
             label="Download Pending Orders as XLSX",
