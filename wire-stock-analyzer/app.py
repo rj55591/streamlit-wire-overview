@@ -28,6 +28,7 @@ def calc_weights(df):
     ) * (df["Area_mm2"] / 1e6)
 
     df["Weight in kg total"] = df["Weight in kg per item"] * df["QTY"]
+    df["Weight with buffer (kg)"] = df["Weight in kg total"] * 1.15
     return df.drop(columns=["Length_mm", "Width_mm", "Area_mm2"])
 
 def generate_final_wire_overview(customer_orders_fp, wire_coil_bal_fp, incoming_stock_fp, default_usage_fp):
@@ -57,8 +58,8 @@ def generate_final_wire_overview(customer_orders_fp, wire_coil_bal_fp, incoming_
     final_df = calc_weights(trimmed_df)
 
     pending_df = final_df[final_df["Job Sheet No."].isna()]
-    pending_usage = pending_df.groupby("Wire ø")["Weight in kg total"].sum().reset_index()
-    pending_usage.columns = ["Wire ø", "Total Pending Wire Required (kg)"]
+    pending_usage = pending_df.groupby("Wire ø")["Weight with buffer (kg)"].sum().reset_index()
+    pending_usage.columns = ["Wire ø", "Total Pending Wire Required (kg) (with 15% buffer)"]
 
     coil_xls = pd.ExcelFile(wire_coil_bal_fp)
     wire_inventory_bal = {}
@@ -86,7 +87,7 @@ def generate_final_wire_overview(customer_orders_fp, wire_coil_bal_fp, incoming_
     usage_df = usage_df.rename(columns={"Avg Jan-May Usage (kg)": "Default Avg Monthly Usage (kg)"})
     usage_df["Wire ø"] = pd.to_numeric(usage_df["Wire ø"], errors="coerce")
 
-    result = pending_usage.merge(inventory_df, on="Wire ø", how="left")
+    result = pending_usage.rename(columns={"Total Pending Wire Required (kg) (with 15% buffer)": "Total Pending Wire Required (kg)"}).merge(inventory_df, on="Wire ø", how="left")
     result = result.merge(incoming_df[["Wire ø", "Kewei", "QS", "Bolin"]], on="Wire ø", how="left")
     result = result.merge(usage_df, on="Wire ø", how="left")
     result.fillna(0, inplace=True)
@@ -143,7 +144,8 @@ if "base_df" in st.session_state:
     base_df["Total Available (kg)"] = base_df[["Available Inventory (kg)"] + included_suppliers].sum(axis=1)
     base_df["Surplus / Shortage (kg)"] = base_df["Total Available (kg)"] - base_df["Total Pending Wire Required (kg)"]
     base_df["Months of Coverage"] = (
-        base_df["Surplus / Shortage (kg)"] / base_df["Default Avg Monthly Usage (kg)"].replace({0: pd.NA})
+        pd.to_numeric(base_df["Surplus / Shortage (kg)"], errors="coerce") /
+        pd.to_numeric(base_df["Default Avg Monthly Usage (kg)"].replace({0: pd.NA}), errors="coerce")
     ).round(2)
 
     st.success("Overview generated successfully!")
